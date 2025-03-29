@@ -10,7 +10,8 @@ import click
 from dotenv import load_dotenv
 
 from . import __version__
-from .summarizer import SummarizerError, generate_summary
+# SummarizerErrorをProcessingErrorに変更
+from .summarizer import ProcessingError, process_video
 
 # 環境変数の読み込み
 load_dotenv()
@@ -25,15 +26,21 @@ def print_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 @click.command()
 @click.argument('url')
 @click.option(
+    '--mode',
+    type=click.Choice(['summary', 'chapter']),
+    default='summary',
+    help='実行モード (summary: 要約, chapter: チャプター生成)'
+)
+@click.option(
     '--model',
     default=os.getenv('DEFAULT_MODEL', 'gemini-2.0-flash'),
-    help='使用するGeminiモデル（デフォルト: gemini-2.0-flash）'
+    help='使用するGeminiモデル'
 )
 @click.option(
     '--length',
     type=click.Choice(['short', 'normal', 'detailed']),
     default=os.getenv('DEFAULT_SUMMARY_LENGTH', 'normal'),
-    help='要約の長さ（short/normal/detailed）'
+    help='要約の長さ（summaryモードのみ）'
 )
 @click.option(
     '--format',
@@ -45,7 +52,7 @@ def print_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 @click.option(
     '--lang',
     default=os.getenv('DEFAULT_LANGUAGE', 'ja'),
-    help='出力言語（デフォルト: 日本語）'
+    help='要約の出力言語（summaryモードのみ、デフォルト: 日本語）'
 )
 @click.option(
     '--prompt',
@@ -55,7 +62,7 @@ def print_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     '--stream',
     is_flag=True,
     default=False,
-    help='ストリーミングモードを有効化（要約をリアルタイムで表示）'
+    help='ストリーミングモードを有効化（summaryモードのテキスト出力のみ）'
 )
 @click.option(
     '--version',
@@ -73,6 +80,7 @@ def print_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 )
 def main(
     url: str,
+    mode: str,
     model: str,
     length: str,
     output_format: str,
@@ -81,11 +89,11 @@ def main(
     stream: bool,
     debug: bool
 ) -> None:
-    """YouTube動画を要約するCLIツール
+    """YouTube動画を要約またはチャプター生成するCLIツール
 
     URL: YouTube動画のURL
     """
-    # 環境変数の検証 (generate_summary呼び出し前に移動)
+    # 環境変数の検証
     if not os.getenv('GEMINI_API_KEY'):
         click.echo("エラー: GEMINI_API_KEYが設定されていません。.envファイルを確認してください。", err=True)
         sys.exit(1)
@@ -94,74 +102,66 @@ def main(
         # デバッグモードの設定
         if debug:
             click.echo("デバッグモード: 有効", err=True)
-            # パラメータの表示
             click.echo("パラメータ:", err=True)
-            click.echo(f"URL: {url}", err=True)
-            click.echo(f"モデル: {model}", err=True)
-            click.echo(f"長さ: {length}", err=True)
-            click.echo(f"出力形式: {output_format}", err=True)
-            click.echo(f"言語: {lang}", err=True)
-            click.echo(f"ストリーミング: {stream}", err=True)
+            click.echo(f"  URL: {url}", err=True)
+            click.echo(f"  モード: {mode}", err=True)
+            click.echo(f"  モデル: {model}", err=True)
+            if mode == 'summary':
+                click.echo(f"  要約長: {length}", err=True)
+                click.echo(f"  言語: {lang}", err=True)
+                click.echo(f"  ストリーミング: {stream}", err=True)
+            click.echo(f"  出力形式: {output_format}", err=True)
             if prompt:
-                click.echo(f"追加プロンプト: {prompt}", err=True)
+                click.echo(f"  追加プロンプト: {prompt}", err=True)
 
-        # ストリーミングモードではJSON出力を無効化
-        if stream and output_format == 'json':
-            click.echo("警告: ストリーミングモードではJSON出力は利用できません。テキスト形式で出力します。", err=True)
-            output_format = 'text'
+        # モードに応じた警告
+        if mode == 'chapter' and stream:
+            click.echo("警告: チャプターモードではストリーミングはサポートされていません。", err=True)
+            stream = False # ストリーミングを無効化
+        if mode == 'chapter' and output_format == 'json' and stream:
+             click.echo("警告: ストリーミングモードではJSON出力は利用できません。テキスト形式で出力します。", err=True)
+             output_format = 'text' # JSONも無効化
 
-        if stream:
-            # ストリーミングモードでの出力
-            click.echo("\n=== 要約生成中 ===\n")
-            summary = generate_summary(
-                url=url,
-                model=model,
-                length=length,
-                output_format='text',  # ストリーミングではテキストのみ
-                lang=lang,
-                prompt=prompt,
-                stream=True
+        label = "チャプターを生成中..." if mode == 'chapter' else "要約を生成中..."
+
+        if stream and mode == 'summary':
+            # 要約のストリーミングモード
+            click.echo(f"\n=== {label} ===\n")
+            result = process_video(
+                url=url, mode=mode, model=model, length=length,
+                output_format='text', lang=lang, prompt=prompt, stream=True
             )
+            # process_videoがストリームでテキストを返す想定 (要確認/修正)
+            # 現状の実装ではgenerate_summaryがテキストを返すので、そのまま表示
+            click.echo(result)
             click.echo("\n===============\n")
         else:
-            # 通常モードでの出力
-            with click.progressbar(
-                length=4,
-                label='要約を生成中...',
-                show_pos=True
-            ) as progress:
-                # 要約の生成
-                summary = generate_summary(
-                    url=url,
-                    model=model,
-                    length=length,
-                    output_format=output_format,
-                    lang=lang,
-                    prompt=prompt,
-                    stream=False
+            # 通常モード (要約 or チャプター)
+            with click.progressbar(length=4, label=label, show_pos=True) as progress:
+                result = process_video(
+                    url=url, mode=mode, model=model, length=length,
+                    output_format=output_format, lang=lang, prompt=prompt, stream=False
                 )
                 progress.update(4)
 
             # 結果の出力
             if output_format == 'json':
-                click.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+                click.echo(json.dumps(result, ensure_ascii=False, indent=2))
             else:
-                click.echo("\n=== 要約結果 ===\n")
-                click.echo(summary)
-                click.echo("\n===============\n")
+                click.echo(f"\n=== {mode.capitalize()} 結果 ===\n")
+                click.echo(result)
+                click.echo("\n====================\n")
 
-    except SummarizerError as e:
+    except ProcessingError as e:
         if debug:
-            # デバッグモードの場合は詳細なエラー情報を表示
-            click.echo(f"要約エラー: {str(e)}", err=True)
-            raise
+            click.echo(f"処理エラー: {str(e)}", err=True)
+            # raise # デバッグ時は元の例外を再raiseするのも有効
         else:
-            # 通常モードではユーザーフレンドリーなエラーメッセージを表示
             click.echo(f"エラー: {str(e)}", err=True)
             sys.exit(1)
     except Exception as e:
         if debug:
-            click.echo(f"予期せぬエラー: {str(e)}", err=True)
+            click.echo(f"予期せぬエラー ({type(e).__name__}): {str(e)}", err=True)
             raise
         else:
             click.echo("予期せぬエラーが発生しました。--debugオプションを使用して詳細を確認してください。", err=True)
