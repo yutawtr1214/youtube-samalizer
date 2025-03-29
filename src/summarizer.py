@@ -80,9 +80,11 @@ def generate_summary(
         else:
             return summary
 
+    # Specific errors first
     except YouTubeError as e:
         raise SummarizerError(f"YouTube動画の処理中にエラーが発生しました: {str(e)}")
     except GeminiError as e:
         raise SummarizerError(f"要約の生成中にエラーが発生しました: {str(e)}")
+    # Generic error last
     except Exception as e:
         raise SummarizerError(f"予期せぬエラーが発生しました: {str(e)}")

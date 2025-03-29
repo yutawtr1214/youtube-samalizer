@@ -85,13 +85,12 @@ def main(
 
     URL: YouTube動画のURL
     """
-    try:
-        # 環境変数の検証
-        if not os.getenv('GEMINI_API_KEY'):
-            raise click.ClickException(
-                "GEMINI_API_KEYが設定されていません。.envファイルを確認してください。"
-            )
+    # 環境変数の検証 (generate_summary呼び出し前に移動)
+    if not os.getenv('GEMINI_API_KEY'):
+        click.echo("エラー: GEMINI_API_KEYが設定されていません。.envファイルを確認してください。", err=True)
+        sys.exit(1)
 
+    try:
         # デバッグモードの設定
         if debug:
             click.echo("デバッグモード: 有効", err=True)
