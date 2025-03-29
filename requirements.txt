@@ -1,0 +1,12 @@
+# Core dependencies
+google-genai>=0.3.2         # Gemini API client (Corrected package name)
+click==8.1.7               # CLI framework
+python-dotenv==1.0.0       # Environment variable management
+requests==2.31.0           # HTTP client
+
+# Development dependencies
+pytest==7.4.3              # Testing framework
+black==23.12.1            # Code formatter
+isort==5.13.2             # Import sorter
+mypy==1.8.0               # Static type checker
+pytest-cov==4.1.0         # Test coverage
