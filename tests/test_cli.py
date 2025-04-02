@@ -26,6 +26,22 @@ MOCK_CHAPTERS_JSON = {
         {"timestamp": "00:01:25", "description": "チャプター2の説明"}
     ]
 }
+MOCK_SOLUTION_TEXT = """## 解決する課題
+動画の課題はこれです。
+
+## 解決ステップ
+1. [00:00:05](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5s) ステップ1の説明
+2. [00:00:30](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s) ステップ2の説明"""
+MOCK_SOLUTION_JSON = {
+    "video": {"title": "Test Video", "author": "Test Author", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "video_id": "dQw4w9WgXcQ"},
+    "solution": {
+        "problem": "動画の課題はこれです。",
+        "steps": [
+            {"timestamp": "00:00:05", "description": "ステップ1の説明", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5s"},
+            {"timestamp": "00:00:30", "description": "ステップ2の説明", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s"}
+        ]
+    }
+}
 
 
 @pytest.fixture
@@ -220,6 +236,58 @@ def test_chapter_mode_with_prompt(runner, mock_process_video):
                 output_format='text',
                 lang='ja',
                 prompt='Focus on technical parts', # プロンプトを指定
+                stream=False
+            )
+
+# --- 課題解決モードのテスト ---
+
+def test_solution_mode_basic_text(runner, mock_process_video):
+    """課題解決モード・基本的な使用方法・テキスト出力のテスト"""
+    mock_process_video.return_value = MOCK_SOLUTION_TEXT
+    with runner.isolated_filesystem(temp_dir=None) as td:
+        with patch.dict('os.environ', {'GEMINI_API_KEY': 'dummy_key'}):
+            result = runner.invoke(main, [
+                'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                '--mode', 'solution'
+            ])
+
+            assert result.exit_code == 0
+            # 出力ヘッダーを確認 (summarizer.pyの実装に合わせる)
+            assert '## 解決する課題' in result.output
+            assert MOCK_SOLUTION_TEXT in result.output
+            mock_process_video.assert_called_once_with(
+                url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                mode='solution',
+                model='gemini-2.0-flash', # デフォルトモデル
+                length='normal', # solutionモードでは無視される
+                output_format='text', # デフォルト形式
+                lang='ja', # solutionモードでは無視される
+                prompt=None,
+                stream=False # solutionモードではstream=False固定
+            )
+
+def test_solution_mode_json_output(runner, mock_process_video):
+    """課題解決モード・JSON形式での出力のテスト"""
+    mock_process_video.return_value = MOCK_SOLUTION_JSON
+    with runner.isolated_filesystem(temp_dir=None) as td:
+        with patch.dict('os.environ', {'GEMINI_API_KEY': 'dummy_key'}):
+            result = runner.invoke(main, [
+                'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                '--mode', 'solution',
+                '--format', 'json'
+            ])
+
+            assert result.exit_code == 0
+            expected_output = json.dumps(MOCK_SOLUTION_JSON, ensure_ascii=False, indent=2)
+            assert expected_output in result.output.strip()
+            mock_process_video.assert_called_once_with(
+                url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                mode='solution',
+                model='gemini-2.0-flash',
+                length='normal',
+                output_format='json', # JSON形式を指定
+                lang='ja',
+                prompt=None,
                 stream=False
             )
 

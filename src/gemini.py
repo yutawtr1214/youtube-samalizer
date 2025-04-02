@@ -5,12 +5,18 @@ import os
 import re # 正規表現モジュールをインポート
 from typing import Dict, Optional, Generator, List, Tuple
 
+import json # JSONパース用
+from typing import Dict, Optional, Generator, List, Tuple, Any # Anyを追加
+
 from google import genai
 from google.genai import types
 
 class GeminiError(Exception):
     """Gemini API関連の例外クラス"""
     pass
+
+# 課題解決構造の型定義 (仮)
+SolutionStructure = Dict[str, Any] # 例: {"problem": "...", "steps": [{"timestamp": "...", "description": "..."}, ...]}
 
 class GeminiClient:
     """Gemini APIクライアント"""
@@ -70,6 +76,42 @@ class GeminiClient:
         prompt = base_prompt
         if additional_prompt:
             prompt += f"\n\n追加の指示: {additional_prompt}" # プロンプトインジェクション対策は別途必要
+
+        return [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_uri(file_uri=video_info['url'], mime_type="video/*"),
+                    types.Part.from_text(text=prompt),
+                ],
+            ),
+        ]
+
+    def _create_solution_contents(self, video_info: Dict[str, str], additional_prompt: Optional[str] = None) -> list:
+        """課題解決構造抽出用のコンテンツを生成する (内部ヘルパー) - JSON出力試行"""
+        base_prompt = f"""以下のYouTube動画の内容を分析し、動画全体で解決しようとしている「課題」と、その課題を解決するための「ステップ」を抽出してください。
+出力は必ず以下のJSON形式に従ってください。
+
+```json
+{{
+  "problem": "動画全体で解決しようとしている課題の説明（簡潔に）",
+  "steps": [
+    {{
+      "timestamp": "HH:MM:SS",
+      "description": "このステップでの具体的な解決行動や説明"
+    }},
+    // ... 他のステップ
+  ]
+}}
+```
+
+動画タイトル: {video_info['title']}
+動画作成者: {video_info['author']}
+
+分析結果のJSON:"""
+        prompt = base_prompt
+        if additional_prompt:
+            prompt += f"\n\n追加の指示: {additional_prompt}"
 
         return [
             types.Content(
@@ -141,6 +183,40 @@ class GeminiClient:
         except Exception as e:
             raise GeminiError(f"チャプターの生成中にエラーが発生しました: {str(e)}")
 
+    def generate_solution_structure(
+        self,
+        video_info: Dict[str, str],
+        model: str = 'gemini-pro', # 課題解決にはより高性能なモデルを推奨
+        additional_prompt: Optional[str] = None,
+    ) -> SolutionStructure:
+        """動画の課題解決構造を生成する"""
+        try:
+            contents = self._create_solution_contents(video_info, additional_prompt)
+            # JSONモードを試す (モデルがサポートしている場合)
+            # 注意: モデルによってはJSONモードが利用できない、または挙動が異なる可能性あり
+            generate_config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                # max_output_tokens=4096 # 必要に応じて調整
+            )
+
+            response = self.client.models.generate_content(
+                model=model, contents=contents, config=generate_config
+            )
+
+            if not response.text: # JSONモードでもtextに結果が入る場合がある
+                 raise GeminiError("課題解決構造の生成に失敗しました。APIからの応答が空です。")
+
+            # 生成されたJSONテキストから課題解決構造をパース
+            solution_data = self._parse_solution_structure(response.text)
+            if not solution_data or 'problem' not in solution_data or 'steps' not in solution_data:
+                 raise GeminiError("生成された応答から課題解決構造を抽出できませんでした。形式が不正か、構造が見つかりませんでした。")
+
+            return solution_data
+
+        except Exception as e:
+            # JSONモード失敗時のフォールバックとしてテキストモードで再試行するなども検討可能
+            raise GeminiError(f"課題解決構造の生成中にエラーが発生しました: {str(e)}")
+
     def _parse_chapters(self, text: str) -> List[Tuple[str, str]]:
         """生成されたテキストからチャプター情報を抽出する"""
         # 正規表現で [HH:MM:SS] 説明 の形式を抽出
@@ -164,6 +240,54 @@ class GeminiClient:
                     # 不正なタイムスタンプ形式は無視
                     continue
         return chapters
+
+    def _parse_solution_structure(self, text: str) -> SolutionStructure:
+        """生成されたJSONテキストから課題解決構造を抽出・検証する"""
+        try:
+            # JSON文字列をパース
+            # API応答が ```json ... ``` のようなマークダウン形式で返る場合があるため、
+            # JSON部分のみを抽出する前処理を行う
+            match = re.search(r"```json\s*([\s\S]+?)\s*```", text)
+            if match:
+                json_text = match.group(1)
+            else:
+                # マークダウン形式でない場合は、そのままパース試行
+                json_text = text
+
+            data = json.loads(json_text)
+
+            # 基本的な構造の検証
+            if not isinstance(data, dict) or 'problem' not in data or 'steps' not in data or not isinstance(data['steps'], list):
+                raise ValueError("JSONの基本構造が不正です ('problem' または 'steps' が存在しないか、'steps'がリストではありません)")
+
+            # ステップ内のタイムスタンプを正規化
+            validated_steps = []
+            for step in data['steps']:
+                if not isinstance(step, dict) or 'timestamp' not in step or 'description' not in step:
+                    # 必須キーがないステップはスキップ（またはエラーにするか検討）
+                    continue
+
+                timestamp = step['timestamp']
+                parts = timestamp.split(':')
+                try:
+                    normalized_timestamp = "{:02d}:{:02d}:{:02d}".format(
+                        int(parts[0]), int(parts[1]), int(parts[2])
+                    )
+                    step['timestamp'] = normalized_timestamp # 正規化したタイムスタンプで上書き
+                    validated_steps.append(step)
+                except (IndexError, ValueError):
+                    # 不正なタイムスタンプ形式のステップはスキップ
+                    continue
+
+            data['steps'] = validated_steps # 検証・正規化済みのステップリストで上書き
+            return data
+
+        except json.JSONDecodeError as e:
+            raise GeminiError(f"課題解決構造のJSONパースに失敗しました: {str(e)}\n応答テキスト: {text}")
+        except ValueError as e:
+            raise GeminiError(f"抽出された課題解決構造の検証に失敗しました: {str(e)}\n応答テキスト: {text}")
+        except Exception as e:
+            raise GeminiError(f"課題解決構造の解析中に予期せぬエラーが発生しました: {str(e)}\n応答テキスト: {text}")
 
 
     def get_available_models(self) -> list:

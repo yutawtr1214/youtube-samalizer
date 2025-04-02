@@ -41,6 +41,30 @@ MOCK_CHAPTERS_JSON_OUTPUT = {
         {'timestamp': '00:05:03', 'description': '最後のチャプター'}
     ]
 }
+# 課題解決モード用のモックデータ
+MOCK_SOLUTION_STRUCTURE = {
+    "problem": "動画の課題はこれです。",
+    "steps": [
+        {"timestamp": "00:00:05", "description": "ステップ1の説明"},
+        {"timestamp": "00:00:30", "description": "ステップ2の説明"}
+    ]
+}
+MOCK_SOLUTION_TEXT_OUTPUT = """## 解決する課題
+動画の課題はこれです。
+
+## 解決ステップ
+1. [00:00:05](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5s) ステップ1の説明
+2. [00:00:30](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s) ステップ2の説明"""
+MOCK_SOLUTION_JSON_OUTPUT = {
+    'video': MOCK_VIDEO_INFO,
+    'solution': {
+        "problem": "動画の課題はこれです。",
+        "steps": [
+            {"timestamp": "00:00:05", "description": "ステップ1の説明", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5s"},
+            {"timestamp": "00:00:30", "description": "ステップ2の説明", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s"}
+        ]
+    }
+}
 
 
 @pytest.fixture
@@ -52,6 +76,8 @@ def mock_gemini_client():
         client_instance.generate_summary.return_value = MOCK_SUMMARY
         # generate_chaptersメソッドのモック (パース済みのリストを返す)
         client_instance.generate_chapters.return_value = MOCK_CHAPTERS_PARSED
+        # generate_solution_structureメソッドのモック (構造化データを返す)
+        client_instance.generate_solution_structure.return_value = MOCK_SOLUTION_STRUCTURE
         mock.return_value = client_instance
         yield mock
 
@@ -150,6 +176,46 @@ def test_process_video_chapter_with_prompt(mock_gemini_client, mock_youtube):
     )
     assert result == MOCK_CHAPTERS_TEXT_OUTPUT # モックは同じ結果を返す
     mock_gemini_client.return_value.generate_chapters.assert_called_once_with(
+        video_info=MOCK_VIDEO_INFO,
+        model='gemini-2.0-flash', # デフォルトモデル
+        additional_prompt=prompt
+    )
+
+# --- 課題解決モードのテスト ---
+
+def test_process_video_solution_text(mock_gemini_client, mock_youtube):
+    """課題解決モード・テキスト形式のテスト"""
+    result = process_video(
+        url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        mode='solution',
+        output_format='text'
+    )
+    assert result == MOCK_SOLUTION_TEXT_OUTPUT
+    mock_gemini_client.return_value.generate_solution_structure.assert_called_once()
+    mock_gemini_client.return_value.generate_summary.assert_not_called()
+    mock_gemini_client.return_value.generate_chapters.assert_not_called()
+
+def test_process_video_solution_json(mock_gemini_client, mock_youtube):
+    """課題解決モード・JSON形式のテスト"""
+    result = process_video(
+        url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        mode='solution',
+        output_format='json'
+    )
+    assert isinstance(result, dict)
+    assert result == MOCK_SOLUTION_JSON_OUTPUT
+    mock_gemini_client.return_value.generate_solution_structure.assert_called_once()
+
+def test_process_video_solution_with_prompt(mock_gemini_client, mock_youtube):
+    """課題解決モード・プロンプト付きのテスト"""
+    prompt = "初心者向けに解説して"
+    result = process_video(
+        url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        mode='solution',
+        prompt=prompt
+    )
+    assert result == MOCK_SOLUTION_TEXT_OUTPUT # モックは同じ結果を返す
+    mock_gemini_client.return_value.generate_solution_structure.assert_called_once_with(
         video_info=MOCK_VIDEO_INFO,
         model='gemini-2.0-flash', # デフォルトモデル
         additional_prompt=prompt

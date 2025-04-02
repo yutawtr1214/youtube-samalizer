@@ -1,10 +1,10 @@
 # YouTube-Samalizer
 
-YouTubeの動画を要約またはチャプター生成するCLIツール
+YouTubeの動画を要約、チャプター生成、または**課題解決構造を抽出**するCLIツール
 
 ## 概要
 
-このツールは、YouTube動画のURLを入力として受け取り、Gemini APIを使用して動画の内容を**要約**または**チャプター分け**するコマンドラインアプリケーションです。
+このツールは、YouTube動画のURLを入力として受け取り、Gemini APIを使用して動画の内容を**要約**、**チャプター分け**、または**動画が解決しようとしている課題とその解決ステップを抽出**するコマンドラインアプリケーションです。
 
 ## 要件
 
@@ -12,9 +12,10 @@ YouTubeの動画を要約またはチャプター生成するCLIツール
 
 - YouTube動画のURLを入力として受け付ける
 - Gemini APIを使用して動画の要約を生成する
-- **Gemini APIを使用して動画のチャプター（タイムスタンプ付き）を生成する**
+- Gemini APIを使用して動画のチャプター（タイムスタンプ付き）を生成する
+- **Gemini APIを使用して動画の課題と解決ステップ（タイムスタンプ、URLリンク付き）を抽出する**
 - コマンドライン引数でカスタマイズ可能なオプションを提供する
-  - **実行モード (要約/チャプター)**
+  - **実行モード (要約/チャプター/課題解決)**
   - 要約の長さ（短い/標準/詳細）
   - 出力形式（テキスト/JSON）
   - 追加のプロンプト指定
@@ -23,7 +24,7 @@ YouTubeの動画を要約またはチャプター生成するCLIツール
 
 ### 非機能要件
 
-- 応答時間：要約生成は30秒以内、**チャプター生成は60秒以内（動画長による）**
+- 応答時間：要約生成は30秒以内、チャプター生成は60秒以内、**課題解決構造抽出は90秒以内（動画長と内容による）**
 - エラー処理：ネットワークエラーやAPI制限に対する適切なハンドリング
 - 再利用性：モジュール化された設計
 - 拡張性：新しい機能の追加が容易な構造
@@ -35,9 +36,9 @@ youtube-samalizer/
 ├── src/
 │   ├── __init__.py
 │   ├── cli.py           # CLIインターフェース
-│   ├── summarizer.py    # 要約・チャプター生成の制御 
+│   ├── summarizer.py    # 要約・チャプター・課題解決の制御
 │   ├── youtube.py       # YouTube動画情報取得
-│   └── gemini.py        # Gemini API連携 (要約・チャプター生成)
+│   └── gemini.py        # Gemini API連携 (要約・チャプター・課題解決)
 ├── tests/               # テストファイル
 ├── requirements.txt     # 依存パッケージ
 ├── .env.example         # 環境変数設定例
@@ -49,12 +50,12 @@ youtube-samalizer/
 1. CLIインターフェース（cli.py）
    - コマンドライン引数の処理 (`--mode` オプション含む)
    - ユーザー入力の検証
-   - 結果の表示 (要約/チャプター)
+   - 結果の表示 (要約/チャプター/課題解決)
 
 2. 制御エンジン（summarizer.py）
-   - **要約またはチャプター生成処理のメインロジック**
+   - **要約、チャプター生成、または課題解決構造抽出処理のメインロジック**
    - YouTubeとGemini APIの連携
-   - 結果のフォーマット
+   - 結果のフォーマット (**課題解決モードではURLリンク付与**)
 
 3. YouTube連携（youtube.py）
    - 動画情報の取得
@@ -62,9 +63,9 @@ youtube-samalizer/
 
 4. Gemini API連携（gemini.py）
    - APIクライアント
-   - **要約・チャプター生成用プロンプト生成**
-   - **要約・チャプター生成API呼び出し**
-   - レスポンス処理 (**チャプター解析含む**)
+   - **要約・チャプター・課題解決用プロンプト生成**
+   - **要約・チャプター・課題解決API呼び出し**
+   - レスポンス処理 (**チャプター解析、課題解決構造解析含む**)
    - 各種モデルの設定と管理
 
 ## 使用技術
@@ -85,13 +86,19 @@ python -m src.cli <YouTube-URL>
 # チャプター生成の基本的な使用方法
 python -m src.cli <YouTube-URL> --mode chapter
 
+# 課題解決構造の抽出 (テキスト形式)
+python -m src.cli <YouTube-URL> --mode solution
+
+# 課題解決構造の抽出 (JSON形式)
+python -m src.cli <YouTube-URL> --mode solution --format json
+
 # 要約オプション指定
 python -m src.cli <YouTube-URL> --length short --format json
 
-# チャプター生成でモデル指定
+# チャプター生成でモデル指定 (課題解決モードでも同様)
 python -m src.cli <YouTube-URL> --mode chapter --model gemini-pro
 
-# 追加プロンプト指定 (要約・チャプター共通)
+# 追加プロンプト指定 (全モード共通)
 python -m src.cli <YouTube-URL> --prompt="重要なポイントを強調して"
 
 # ヘルプ表示
@@ -100,15 +107,15 @@ python -m src.cli --help
 
 ### オプション
 
-- `--mode`: 実行モード (`summary` または `chapter`、デフォルト: `summary`)
+- `--mode`: 実行モード (`summary`, `chapter`, `solution`、デフォルト: `summary`)
 - `--length`: 要約の長さ (`short`/`normal`/`detailed`、`summary`モードのみ、デフォルト: `normal`)
 - `--format`: 出力形式 (`text`/`json`、デフォルト: `text`)
-- `--prompt`: 追加のプロンプト (要約・チャプター共通)
+- `--prompt`: 追加のプロンプト (全モード共通)
 - `--lang`: 要約の出力言語 (`summary`モードのみ、デフォルト: `ja`)
 - `--model`: 使用するGeminiモデル (デフォルト: `gemini-2.0-flash`)
   - 利用可能なモデル例:
     - `gemini-2.0-flash`: 高速な処理
-    - `gemini-pro`: より詳細な分析
+    - `gemini-pro`: より詳細な分析、**課題解決モード推奨**
     - `gemini-pro-vision`: 視覚要素も考慮 (APIサポート状況による)
 - `--stream`: ストリーミングモード (`summary`モードのテキスト出力のみ、デフォルト: 無効)
 - `--version`: バージョン情報を表示
@@ -151,6 +158,9 @@ python -m src.cli <YouTube-URL>
 
 # チャプター生成
 python -m src.cli <YouTube-URL> --mode chapter
+
+# 課題解決構造の抽出
+python -m src.cli <YouTube-URL> --mode solution
 ```
 
 ## 開発環境のセットアップ

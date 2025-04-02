@@ -27,9 +27,9 @@ def print_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 @click.argument('url')
 @click.option(
     '--mode',
-    type=click.Choice(['summary', 'chapter']),
+    type=click.Choice(['summary', 'chapter', 'solution']),
     default='summary',
-    help='実行モード (summary: 要約, chapter: チャプター生成)'
+    help='実行モード (summary: 要約, chapter: チャプター生成, solution: 課題解決)'
 )
 @click.option(
     '--model',
