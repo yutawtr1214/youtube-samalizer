@@ -63,14 +63,26 @@ class GeminiClient:
             ),
         ]
 
-    def _create_chapter_contents(self, video_info: Dict[str, str], additional_prompt: Optional[str] = None) -> list:
+    def _create_chapter_contents(self, video_info: Dict[str, Any], additional_prompt: Optional[str] = None) -> list:
         """チャプター生成用のコンテンツを生成する (内部ヘルパー)"""
+        # 動画の長さ情報を取得（API経由で取得できた場合のみ）
+        duration_info = ""
+        if 'duration_seconds' in video_info and video_info['duration_seconds'] > 0:
+            duration_text = video_info.get('duration_text', '00:00:00')
+            duration_seconds = video_info.get('duration_seconds', 0)
+            duration_info = f"""
+動画の長さ: {duration_text} ({duration_seconds}秒)"""
+
         base_prompt = f"""以下のYouTube動画の内容を分析し、主要なトピックや話題の変わり目に基づいてチャプターを生成してください。
 各チャプターは必ず以下の形式で出力してください：
 [HH:MM:SS] チャプターの簡単な説明
 
 動画タイトル: {video_info['title']}
-動画作成者: {video_info['author']}
+動画作成者: {video_info['author']}{duration_info}
+
+重要: チャプターのタイムスタンプは動画内の実際の時間に合わせてください。
+最初のチャプターは [00:00:00] から始め、最後のチャプターは動画の終了時間を超えないようにしてください。
+各チャプターは動画内の実際の内容の変わり目に対応させてください。
 
 チャプターリスト:"""
         prompt = base_prompt
@@ -87,8 +99,16 @@ class GeminiClient:
             ),
         ]
 
-    def _create_solution_contents(self, video_info: Dict[str, str], additional_prompt: Optional[str] = None) -> list:
+    def _create_solution_contents(self, video_info: Dict[str, Any], additional_prompt: Optional[str] = None) -> list:
         """課題解決構造抽出用のコンテンツを生成する (内部ヘルパー) - JSON出力試行"""
+        # 動画の長さ情報を取得（API経由で取得できた場合のみ）
+        duration_info = ""
+        if 'duration_seconds' in video_info and video_info['duration_seconds'] > 0:
+            duration_text = video_info.get('duration_text', '00:00:00')
+            duration_seconds = video_info.get('duration_seconds', 0)
+            duration_info = f"""
+動画の長さ: {duration_text} ({duration_seconds}秒)"""
+
         base_prompt = f"""以下のYouTube動画の内容を分析し、動画全体で解決しようとしている「課題」と、その課題を解決するための「ステップ」を抽出してください。
 出力は必ず以下のJSON形式に従ってください。
 
@@ -106,7 +126,11 @@ class GeminiClient:
 ```
 
 動画タイトル: {video_info['title']}
-動画作成者: {video_info['author']}
+動画作成者: {video_info['author']}{duration_info}
+
+重要: ステップのタイムスタンプは動画内の実際の時間に合わせてください。
+最初のステップは 00:00:00 から始まる必要はありませんが、全てのタイムスタンプは動画の長さ内に収まるようにしてください。
+必ず動画内の実際の内容に対応するタイムスタンプを使用してください。
 
 分析結果のJSON:"""
         prompt = base_prompt
@@ -153,7 +177,7 @@ class GeminiClient:
 
     def generate_chapters(
         self,
-        video_info: Dict[str, str],
+        video_info: Dict[str, Any],
         model: str = 'gemini-2.0-flash', # チャプター生成に適したモデルを選ぶ必要あり
         additional_prompt: Optional[str] = None,
     ) -> List[Tuple[str, str]]:
@@ -178,6 +202,31 @@ class GeminiClient:
             if not chapters:
                 raise GeminiError("生成されたテキストからチャプター情報を抽出できませんでした。形式が不正か、チャプターが見つかりませんでした。")
 
+            # タイムスタンプの検証（動画の長さ情報がある場合）
+            if 'duration_seconds' in video_info and video_info['duration_seconds'] > 0:
+                video_duration = video_info['duration_seconds']
+                validated_chapters = []
+                
+                for timestamp, description in chapters:
+                    # タイムスタンプを秒数に変換
+                    h, m, s = map(int, timestamp.split(':'))
+                    timestamp_seconds = h * 3600 + m * 60 + s
+                    
+                    # 動画の長さを超えていないか確認
+                    if timestamp_seconds <= video_duration:
+                        validated_chapters.append((timestamp, description))
+                    else:
+                        # ログ出力あるいは警告（開発者向け）
+                        print(f"警告: タイムスタンプ {timestamp} が動画長 {video_info['duration_text']} を超えています。無視します。")
+                
+                if validated_chapters:
+                    return validated_chapters
+                else:
+                    # 全てのチャプターが無効な場合は元のチャプターを返す
+                    # エラーメッセージをログに出力
+                    print("警告: 全てのチャプターのタイムスタンプが動画の長さを超えています。検証をスキップします。")
+                    return chapters
+            
             return chapters
 
         except Exception as e:
@@ -185,7 +234,7 @@ class GeminiClient:
 
     def generate_solution_structure(
         self,
-        video_info: Dict[str, str],
+        video_info: Dict[str, Any],
         model: str = 'gemini-pro', # 課題解決にはより高性能なモデルを推奨
         additional_prompt: Optional[str] = None,
     ) -> SolutionStructure:
@@ -211,6 +260,31 @@ class GeminiClient:
             if not solution_data or 'problem' not in solution_data or 'steps' not in solution_data:
                  raise GeminiError("生成された応答から課題解決構造を抽出できませんでした。形式が不正か、構造が見つかりませんでした。")
 
+            # タイムスタンプの検証（動画の長さ情報がある場合）
+            if 'duration_seconds' in video_info and video_info['duration_seconds'] > 0 and 'steps' in solution_data:
+                video_duration = video_info['duration_seconds']
+                validated_steps = []
+                
+                for step in solution_data['steps']:
+                    if 'timestamp' in step:
+                        # タイムスタンプを秒数に変換
+                        timestamp = step['timestamp']
+                        h, m, s = map(int, timestamp.split(':'))
+                        timestamp_seconds = h * 3600 + m * 60 + s
+                        
+                        # 動画の長さを超えていないか確認
+                        if timestamp_seconds <= video_duration:
+                            validated_steps.append(step)
+                        else:
+                            # ログ出力あるいは警告（開発者向け）
+                            print(f"警告: ステップのタイムスタンプ {timestamp} が動画長 {video_info['duration_text']} を超えています。無視します。")
+                
+                if validated_steps:
+                    solution_data['steps'] = validated_steps
+                else:
+                    # 全てのステップが無効な場合はログに警告を出力
+                    print("警告: 全てのステップのタイムスタンプが動画の長さを超えています。検証をスキップします。")
+            
             return solution_data
 
         except Exception as e:

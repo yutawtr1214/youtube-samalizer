@@ -58,15 +58,51 @@ youtube-samalizer/
    - 結果のフォーマット (**課題解決モードではURLリンク付与**)
 
 3. YouTube連携（youtube.py）
-   - 動画情報の取得
+   - 動画情報の取得（OEmbed API / YouTube Data API）
    - URLの検証
+   - 動画の長さ情報取得（YouTube Data API使用時のみ）
 
 4. Gemini API連携（gemini.py）
    - APIクライアント
    - **要約・チャプター・課題解決用プロンプト生成**
    - **要約・チャプター・課題解決API呼び出し**
    - レスポンス処理 (**チャプター解析、課題解決構造解析含む**)
+   - タイムスタンプの検証（動画の長さ情報と照合）
    - 各種モデルの設定と管理
+
+## 使用API
+
+このアプリケーションは、主に以下の外部APIを使用しています：
+
+### 1. Google Gemini API（必須）
+- **用途**: 動画内容の分析、要約、チャプター生成、課題解決構造の抽出
+- **認証**: API キーが必要（`.env`ファイルに`GEMINI_API_KEY`として設定）
+- **注意点**: 
+  - 一定量の無料枠がありますが、大量の使用は課金が必要になります
+  - モデルによって性能と処理速度が異なります（要約には`gemini-2.0-flash`、課題解決には`gemini-pro`推奨）
+
+### 2. YouTube APIs
+このアプリケーションでは、YouTubeの情報を取得するために2つのAPIを使用しています：
+
+#### a. YouTube OEmbed API（必須・APIキー不要）
+- **用途**: 動画の基本情報（タイトル、作者名など）の取得
+- **認証**: 不要
+- **制限**: 詳細情報（動画の長さなど）は取得できない
+
+#### b. YouTube Data API（オプション・推奨）
+- **用途**: 動画の詳細情報、特に動画の長さ（duration）を取得
+- **認証**: API キーが必要（`.env`ファイルに`YOUTUBE_API_KEY`として設定）
+- **利点**: 
+  - 正確な動画長情報の取得が可能（タイムスタンプ検証に使用）
+  - より精度の高いチャプターや課題解決ステップのタイムスタンプを生成
+
+#### YouTube Data APIの重要性
+
+YouTube Data APIの設定は必須ではありませんが、推奨します。設定しない場合：
+
+- 動画の長さ情報がGemini APIに提供されず、生成されるタイムスタンプの精度が低下
+- タイムスタンプの検証が実質的に無効になり、不正確なタイムスタンプが結果に含まれる可能性
+- 特にチャプターモードと課題解決モードでは、実際の動画時間を超えるタイムスタンプが生成される可能性があります
 
 ## 使用技術
 
@@ -75,6 +111,7 @@ youtube-samalizer/
 - click (CLIフレームワーク)
 - python-dotenv (環境変数管理)
 - requests (HTTPクライアント)
+- isodate (YouTube動画時間のパース)
 - pytest (テスト)
 
 ## CLIの使い方
@@ -125,7 +162,7 @@ python -m src.cli --help
 
 **1. リポジトリのクローン:**
 ```bash
-git clone https://github.com/your-username/youtube-samalizer.git # あなたのリポジトリURLに置き換えてください
+git clone https://github.com/yutawtr1214/youtube-samalizer.git # あなたのリポジトリURLに置き換えてください
 cd youtube-samalizer
 ```
 
@@ -145,10 +182,20 @@ pip install -r requirements.txt
 
 **4. 環境変数の設定:**
    - `.env.example` ファイルをコピーして `.env` ファイルを作成します。
-   - `.env` ファイルを開き、`GEMINI_API_KEY` にあなたのGemini APIキーを設定します。
-   ```.env
-   GEMINI_API_KEY=YOUR_API_KEY_HERE
-   # 他のデフォルト設定は必要に応じて変更
+   - `.env` ファイルを開き、以下の環境変数を設定します：
+   
+   ```env
+   # 必須: Gemini APIキー
+   GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
+   
+   # 推奨: YouTube Data APIキー (より正確なタイムスタンプ生成のため)
+   YOUTUBE_API_KEY=YOUR_YOUTUBE_API_KEY_HERE
+   
+   # 他のオプション設定（必要に応じて変更）
+   DEFAULT_MODEL=gemini-2.0-flash
+   DEFAULT_SUMMARY_LENGTH=normal
+   DEFAULT_OUTPUT_FORMAT=text
+   DEFAULT_LANGUAGE=ja
    ```
 
 **5. 実行:**
@@ -163,6 +210,18 @@ python -m src.cli <YouTube-URL> --mode chapter
 python -m src.cli <YouTube-URL> --mode solution
 ```
 
+### APIキーの取得方法
+
+1. **Gemini API キー (必須)**:
+   - [Google AI Studio](https://ai.google.dev/) にアクセス
+   - アカウント作成/ログイン後、APIキーを作成
+
+2. **YouTube Data API キー (推奨)**:
+   - [Google Cloud Console](https://console.cloud.google.com/) にアクセス
+   - プロジェクトを作成
+   - YouTube Data API v3 を有効化
+   - 認証情報ページからAPIキーを作成
+
 ## 開発環境のセットアップ
 
 上記インストール手順 1-4 を実行後、開発用パッケージもインストールします。
@@ -173,3 +232,4 @@ pip install -r requirements.txt # 念のため再実行
 
 # テストの実行
 python -m pytest tests/ -v
+```

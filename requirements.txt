@@ -3,6 +3,7 @@ google-genai>=0.3.2         # Gemini API client (Corrected package name)
 click==8.1.7               # CLI framework
 python-dotenv==1.0.0       # Environment variable management
 requests==2.31.0           # HTTP client
+isodate==0.6.1             # ISO 8601 duration parser for YouTube API
 
 # Development dependencies
 pytest==7.4.3              # Testing framework
